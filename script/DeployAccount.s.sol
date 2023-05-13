@@ -8,7 +8,7 @@ import "../src/AccountProxy.sol";
 
 contract DeployAccount is Script {
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("TESTNET_ACCOUNT_DEPLOYER");
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerPrivateKey);
 
         Account implementation = new Account{
