@@ -38,12 +38,12 @@ contract Account is
 
     struct Session {
         address from;
-        string[3] allowedFunctions;
+        string allowedFunctions;
         uint256 sessionNonce;
     }
 
     string private constant SESSION_TYPE =
-        "Session(address from, string[3] allowedFunctions, uint256 sessionNonce)";
+        "Session(address from,string allowedFunctions,uint256 sessionNonce)";
     uint256 constant chainId = 30001;
     // address constant verifyingContract = ;
     string private constant EIP712_DOMAIN =
