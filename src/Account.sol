@@ -51,13 +51,16 @@ contract Account is
 
     /// @dev ERC-4337 entry point address
     address public immutable _entryPoint;
-    /// @dev session nonce to check signature against
+    // /// @dev session nonce to check signature against
     uint256 public sessionNonce;
-    /// @dev allowed signless functions during the session
-    string[3] public allowedFunctions = ["post", "comment", "mirror4"];
+    // /// @dev allowed signless functions during the session
+    // string public allowedFunctions = "post,comment,mirror";
 
     /// @dev mapping from owner => selector => implementation
     mapping(address => mapping(bytes4 => address)) public overrides;
+
+    /// @dev mapping from owner => caller => has permissions
+    mapping(address => mapping(address => bool)) public permissions;
 
     event OverrideUpdated(
         address owner,
@@ -133,7 +136,6 @@ contract Account is
         bytes memory signature
     ) external view returns (bytes4 magicValue) {
         _handleOverrideStatic();
-
         bool isValid = SignatureChecker.isValidSignatureNow(
             owner(),
             hash,
@@ -201,6 +203,9 @@ contract Account is
 
         // authorize token owner
         if (caller == _owner) return true;
+
+        // authorize caller if owner has granted permissions
+        if (permissions[_owner][caller]) return true;
 
         return false;
     }
@@ -283,23 +288,23 @@ contract Account is
         revert UntrustedImplementation();
     }
 
-    function checkSig(
-        bytes memory signature
-    ) external view returns (uint256 validationData) {
-        string[3] memory functions = allowedFunctions;
-        bytes32 messageHashSigned = hashSessionSigned(
-            msg.sender,
-            functions,
-            sessionNonce
-        );
+    // function checkSig(
+    //     bytes memory signature
+    // ) external view returns (uint256 validationData) {
+    //     string[3] memory functions = allowedFunctions;
+    //     bytes32 messageHashSigned = hashSessionSigned(
+    //         msg.sender,
+    //         functions,
+    //         sessionNonce
+    //     );
 
-        bool isUserOpValid = recoverSigner(messageHashSigned, signature) ==
-            owner();
-        if (!isUserOpValid) {
-            return 0;
-        }
-        return 1;
-    }
+    //     bool isUserOpValid = recoverSigner(messageHashSigned, signature) ==
+    //         owner();
+    //     if (!isUserOpValid) {
+    //         return 0;
+    //     }
+    //     return 1;
+    // }
 
     /// @dev Validates a signature for a given ERC-4337 operation
     function _validateSignature(
@@ -316,7 +321,7 @@ contract Account is
         }
 
         return 1;
-        // string[3] memory functions = allowedFunctions;
+        // string memory functions = allowedFunctions;
         // bytes32 messageHashSigned = hashSessionSigned(
         //     userOp.sender,
         //     functions,
@@ -338,71 +343,71 @@ contract Account is
         // return 1;
     }
 
-    function recoverSigner(
-        bytes32 _ethSignedMessageHash,
-        bytes memory _signature
-    ) private pure returns (address) {
-        (bytes32 r, bytes32 s, uint8 v) = splitSignature(_signature);
+    // function recoverSigner(
+    //     bytes32 _ethSignedMessageHash,
+    //     bytes memory _signature
+    // ) private pure returns (address) {
+    //     (bytes32 r, bytes32 s, uint8 v) = splitSignature(_signature);
 
-        return ecrecover(_ethSignedMessageHash, v, r, s);
-    }
+    //     return ecrecover(_ethSignedMessageHash, v, r, s);
+    // }
 
-    function splitSignature(
-        bytes memory sig
-    ) private pure returns (bytes32 r, bytes32 s, uint8 v) {
-        require(sig.length == 65, "invalid signature length");
+    // function splitSignature(
+    //     bytes memory sig
+    // ) private pure returns (bytes32 r, bytes32 s, uint8 v) {
+    //     require(sig.length == 65, "invalid signature length");
 
-        assembly {
-            /*
-            First 32 bytes stores the length of the signature
+    //     assembly {
+    //         /*
+    //         First 32 bytes stores the length of the signature
 
-            add(sig, 32) = pointer of sig + 32
-            effectively, skips first 32 bytes of signature
+    //         add(sig, 32) = pointer of sig + 32
+    //         effectively, skips first 32 bytes of signature
 
-            mload(p) loads next 32 bytes starting at the memory address p into memory
-            */
+    //         mload(p) loads next 32 bytes starting at the memory address p into memory
+    //         */
 
-            // first 32 bytes, after the length prefix
-            r := mload(add(sig, 32))
-            // second 32 bytes
-            s := mload(add(sig, 64))
-            // final byte (first byte of the next 32 bytes)
-            v := byte(0, mload(add(sig, 96)))
-        }
+    //         // first 32 bytes, after the length prefix
+    //         r := mload(add(sig, 32))
+    //         // second 32 bytes
+    //         s := mload(add(sig, 64))
+    //         // final byte (first byte of the next 32 bytes)
+    //         v := byte(0, mload(add(sig, 96)))
+    //     }
 
-        // implicitly return (r, s, v)
-    }
+    //     // implicitly return (r, s, v)
+    // }
 
-    function hashSessionSigned(
-        address _from,
-        string[3] memory _allowedFunctions,
-        uint256 _sessionNonce
-    ) private view returns (bytes32) {
-        bytes32 DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                EIP712_DOMAIN,
-                keccak256("Lenssion"),
-                keccak256("1"),
-                chainId,
-                address(this)
-            )
-        );
-        return
-            keccak256(
-                abi.encodePacked(
-                    "\\x19\\x01",
-                    DOMAIN_SEPARATOR,
-                    keccak256(
-                        abi.encode(
-                            SESSION_TYPE,
-                            _from,
-                            _allowedFunctions,
-                            _sessionNonce
-                        )
-                    )
-                )
-            );
-    }
+    // function hashSessionSigned(
+    //     address _from,
+    //     string[3] memory _allowedFunctions,
+    //     uint256 _sessionNonce
+    // ) private view returns (bytes32) {
+    //     bytes32 DOMAIN_SEPARATOR = keccak256(
+    //         abi.encode(
+    //             EIP712_DOMAIN,
+    //             keccak256("Lenssion"),
+    //             keccak256("1"),
+    //             chainId,
+    //             address(this)
+    //         )
+    //     );
+    //     return
+    //         keccak256(
+    //             abi.encodePacked(
+    //                 "\\x19\\x01",
+    //                 DOMAIN_SEPARATOR,
+    //                 keccak256(
+    //                     abi.encode(
+    //                         SESSION_TYPE,
+    //                         _from,
+    //                         _allowedFunctions,
+    //                         _sessionNonce
+    //                     )
+    //                 )
+    //             )
+    //         );
+    // }
 
     /// @dev Executes a low-level call
     function _call(
