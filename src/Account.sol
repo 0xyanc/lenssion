@@ -38,13 +38,12 @@ contract Account is
 
     struct Session {
         address from;
-        address to;
         string[3] allowedFunctions;
         uint256 sessionNonce;
     }
 
     string private constant SESSION_TYPE =
-        "Session(address from, address to, string[3] allowedFunctions, uint256 sessionNonce)";
+        "Session(address from, string[3] allowedFunctions, uint256 sessionNonce)";
     uint256 constant chainId = 30001;
     // address constant verifyingContract = ;
     string private constant EIP712_DOMAIN =
@@ -55,7 +54,7 @@ contract Account is
     /// @dev session nonce to check signature against
     uint256 public sessionNonce;
     /// @dev allowed signless functions during the session
-    string[3] public allowedFunctions = ["post", "comment", "mirror"];
+    string[3] public allowedFunctions = ["post", "comment", "mirror4"];
 
     /// @dev mapping from owner => selector => implementation
     mapping(address => mapping(bytes4 => address)) public overrides;
@@ -284,32 +283,59 @@ contract Account is
         revert UntrustedImplementation();
     }
 
+    function checkSig(
+        bytes memory signature
+    ) external view returns (uint256 validationData) {
+        string[3] memory functions = allowedFunctions;
+        bytes32 messageHashSigned = hashSessionSigned(
+            msg.sender,
+            functions,
+            sessionNonce
+        );
+
+        bool isUserOpValid = recoverSigner(messageHashSigned, signature) ==
+            owner();
+        if (!isUserOpValid) {
+            return 0;
+        }
+        return 1;
+    }
+
     /// @dev Validates a signature for a given ERC-4337 operation
     function _validateSignature(
         UserOperation calldata userOp,
         bytes32 userOpHash
     ) internal view override returns (uint256 validationData) {
-        string[3] memory functions = allowedFunctions;
-        bytes32 messageHashSigned = hashSessionSigned(
-            userOp.sender,
-            address(this),
-            functions,
-            sessionNonce
-        );
-
-        bool isUserOpValid = recoverSigner(
-            messageHashSigned,
-            userOp.signature
-        ) == owner();
-        bool isHashValid = this.isValidSignature(
+        bool isValid = this.isValidSignature(
             userOpHash.toEthSignedMessageHash(),
             userOp.signature
         ) == IERC1271.isValidSignature.selector;
 
-        if (!isUserOpValid || !isHashValid) {
+        if (isValid) {
             return 0;
         }
+
         return 1;
+        // string[3] memory functions = allowedFunctions;
+        // bytes32 messageHashSigned = hashSessionSigned(
+        //     userOp.sender,
+        //     functions,
+        //     sessionNonce
+        // );
+
+        // bool isUserOpValid = recoverSigner(
+        //     messageHashSigned,
+        //     userOp.signature
+        // ) == owner();
+        // bool isHashValid = this.isValidSignature(
+        //     userOpHash.toEthSignedMessageHash(),
+        //     userOp.signature
+        // ) == IERC1271.isValidSignature.selector;
+
+        // if (!isUserOpValid || !isHashValid) {
+        //     return 0;
+        // }
+        // return 1;
     }
 
     function recoverSigner(
@@ -349,7 +375,6 @@ contract Account is
 
     function hashSessionSigned(
         address _from,
-        address _to,
         string[3] memory _allowedFunctions,
         uint256 _sessionNonce
     ) private view returns (bytes32) {
@@ -371,7 +396,6 @@ contract Account is
                         abi.encode(
                             SESSION_TYPE,
                             _from,
-                            _to,
                             _allowedFunctions,
                             _sessionNonce
                         )
