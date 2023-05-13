@@ -15,8 +15,6 @@ import "openzeppelin-contracts/proxy/utils/UUPSUpgradeable.sol";
 
 import {BaseAccount as BaseERC4337Account, IEntryPoint, UserOperation} from "account-abstraction/core/BaseAccount.sol";
 
-import "./interfaces/IAccountGuardian.sol";
-
 error NotAuthorized();
 error InvalidInput();
 error AccountLocked();
@@ -38,30 +36,35 @@ contract Account is
 {
     using ECDSA for bytes32;
 
+    struct Session {
+        address from;
+        address to;
+        string[3] allowedFunctions;
+        uint256 sessionNonce;
+    }
+
+    string private constant SESSION_TYPE =
+        "Session(address from, address to, string[3] allowedFunctions, uint256 sessionNonce)";
+    uint256 constant chainId = 30001;
+    // address constant verifyingContract = ;
+    string private constant EIP712_DOMAIN =
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+
     /// @dev ERC-4337 entry point address
     address public immutable _entryPoint;
-
-    /// @dev AccountGuardian contract address
-    address public immutable guardian;
-
-    /// @dev timestamp at which this account will be unlocked
-    uint256 public lockedUntil;
+    /// @dev session nonce to check signature against
+    uint256 public sessionNonce;
+    /// @dev allowed signless functions during the session
+    string[3] public allowedFunctions = ["post", "comment", "mirror"];
 
     /// @dev mapping from owner => selector => implementation
     mapping(address => mapping(bytes4 => address)) public overrides;
-
-    /// @dev mapping from owner => caller => has permissions
-    mapping(address => mapping(address => bool)) public permissions;
 
     event OverrideUpdated(
         address owner,
         bytes4 selector,
         address implementation
     );
-
-    event PermissionUpdated(address owner, address caller, bool hasPermission);
-
-    event LockUpdated(uint256 lockedUntil);
 
     /// @dev reverts if caller is not the owner of the account
     modifier onlyOwner() {
@@ -75,18 +78,10 @@ contract Account is
         _;
     }
 
-    /// @dev reverts if this account is currently locked
-    modifier onlyUnlocked() {
-        if (isLocked()) revert AccountLocked();
-        _;
-    }
-
-    constructor(address _guardian, address entryPoint_) {
-        if (_guardian == address(0) || entryPoint_ == address(0))
-            revert InvalidInput();
+    constructor(address entryPoint_) {
+        if (entryPoint_ == address(0)) revert InvalidInput();
 
         _entryPoint = entryPoint_;
-        guardian = _guardian;
     }
 
     /// @dev allows eth transfers by default, but allows account owner to override
@@ -104,7 +99,7 @@ contract Account is
         address to,
         uint256 value,
         bytes calldata data
-    ) external payable onlyAuthorized onlyUnlocked returns (bytes memory) {
+    ) external payable onlyAuthorized returns (bytes memory) {
         emit TransactionExecuted(to, value, data);
 
         _incrementNonce();
@@ -116,7 +111,7 @@ contract Account is
     function setOverrides(
         bytes4[] calldata selectors,
         address[] calldata implementations
-    ) external onlyUnlocked {
+    ) external {
         address _owner = owner();
         if (msg.sender != _owner) revert NotAuthorized();
 
@@ -132,50 +127,12 @@ contract Account is
         _incrementNonce();
     }
 
-    /// @dev grants a given caller execution permissions
-    function setPermissions(
-        address[] calldata callers,
-        bool[] calldata _permissions
-    ) external onlyUnlocked {
-        address _owner = owner();
-        if (msg.sender != _owner) revert NotAuthorized();
-
-        uint256 length = callers.length;
-
-        if (_permissions.length != length) revert InvalidInput();
-
-        for (uint256 i = 0; i < length; i++) {
-            permissions[_owner][callers[i]] = _permissions[i];
-            emit PermissionUpdated(_owner, callers[i], _permissions[i]);
-        }
-
-        _incrementNonce();
-    }
-
-    /// @dev locks the account until a certain timestamp
-    function lock(uint256 _lockedUntil) external onlyOwner onlyUnlocked {
-        if (_lockedUntil > block.timestamp + 365 days)
-            revert ExceedsMaxLockTime();
-
-        lockedUntil = _lockedUntil;
-
-        emit LockUpdated(_lockedUntil);
-
-        _incrementNonce();
-    }
-
-    /// @dev returns the current lock status of the account as a boolean
-    function isLocked() public view returns (bool) {
-        return lockedUntil > block.timestamp;
-    }
-
     /// @dev EIP-1271 signature validation. By default, only the owner of the account is permissioned to sign.
     /// This function can be overriden.
-    function isValidSignature(bytes32 hash, bytes memory signature)
-        external
-        view
-        returns (bytes4 magicValue)
-    {
+    function isValidSignature(
+        bytes32 hash,
+        bytes memory signature
+    ) external view returns (bytes4 magicValue) {
         _handleOverrideStatic();
 
         bool isValid = SignatureChecker.isValidSignatureNow(
@@ -196,11 +153,7 @@ contract Account is
     function token()
         external
         view
-        returns (
-            uint256 chainId,
-            address tokenContract,
-            uint256 tokenId
-        )
+        returns (uint256 chainId, address tokenContract, uint256 tokenId)
     {
         return ERC6551AccountLib.token();
     }
@@ -250,26 +203,14 @@ contract Account is
         // authorize token owner
         if (caller == _owner) return true;
 
-        // authorize caller if owner has granted permissions
-        if (permissions[_owner][caller]) return true;
-
-        // authorize trusted cross-chain executors if not on native chain
-        if (
-            chainId != block.chainid &&
-            IAccountGuardian(guardian).isTrustedExecutor(caller)
-        ) return true;
-
         return false;
     }
 
     /// @dev Returns true if a given interfaceId is supported by this account. This method can be
     /// extended by an override.
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override
-        returns (bool)
-    {
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override returns (bool) {
         bool defaultSupport = interfaceId == type(IERC165).interfaceId ||
             interfaceId == type(IERC1155Receiver).interfaceId ||
             interfaceId == type(IERC6551Account).interfaceId;
@@ -335,16 +276,12 @@ contract Account is
 
     /// @dev Contract upgrades can only be performed by the owner and the new implementation must
     /// be trusted
-    function _authorizeUpgrade(address newImplementation)
-        internal
-        view
-        override
-        onlyOwner
-    {
-        bool isTrusted = IAccountGuardian(guardian).isTrustedImplementation(
-            newImplementation
-        );
-        if (!isTrusted) revert UntrustedImplementation();
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal view override onlyOwner {
+        address _owner = owner();
+        if (msg.sender != _owner) revert NotAuthorized();
+        revert UntrustedImplementation();
     }
 
     /// @dev Validates a signature for a given ERC-4337 operation
@@ -352,16 +289,95 @@ contract Account is
         UserOperation calldata userOp,
         bytes32 userOpHash
     ) internal view override returns (uint256 validationData) {
-        bool isValid = this.isValidSignature(
+        string[3] memory functions = allowedFunctions;
+        bytes32 messageHashSigned = hashSessionSigned(
+            userOp.sender,
+            address(this),
+            functions,
+            sessionNonce
+        );
+
+        bool isUserOpValid = recoverSigner(
+            messageHashSigned,
+            userOp.signature
+        ) == owner();
+        bool isHashValid = this.isValidSignature(
             userOpHash.toEthSignedMessageHash(),
             userOp.signature
         ) == IERC1271.isValidSignature.selector;
 
-        if (isValid) {
+        if (!isUserOpValid || !isHashValid) {
             return 0;
         }
-
         return 1;
+    }
+
+    function recoverSigner(
+        bytes32 _ethSignedMessageHash,
+        bytes memory _signature
+    ) private pure returns (address) {
+        (bytes32 r, bytes32 s, uint8 v) = splitSignature(_signature);
+
+        return ecrecover(_ethSignedMessageHash, v, r, s);
+    }
+
+    function splitSignature(
+        bytes memory sig
+    ) private pure returns (bytes32 r, bytes32 s, uint8 v) {
+        require(sig.length == 65, "invalid signature length");
+
+        assembly {
+            /*
+            First 32 bytes stores the length of the signature
+
+            add(sig, 32) = pointer of sig + 32
+            effectively, skips first 32 bytes of signature
+
+            mload(p) loads next 32 bytes starting at the memory address p into memory
+            */
+
+            // first 32 bytes, after the length prefix
+            r := mload(add(sig, 32))
+            // second 32 bytes
+            s := mload(add(sig, 64))
+            // final byte (first byte of the next 32 bytes)
+            v := byte(0, mload(add(sig, 96)))
+        }
+
+        // implicitly return (r, s, v)
+    }
+
+    function hashSessionSigned(
+        address _from,
+        address _to,
+        string[3] memory _allowedFunctions,
+        uint256 _sessionNonce
+    ) private view returns (bytes32) {
+        bytes32 DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                EIP712_DOMAIN,
+                keccak256("Lenssion"),
+                keccak256("1"),
+                chainId,
+                address(this)
+            )
+        );
+        return
+            keccak256(
+                abi.encodePacked(
+                    "\\x19\\x01",
+                    DOMAIN_SEPARATOR,
+                    keccak256(
+                        abi.encode(
+                            SESSION_TYPE,
+                            _from,
+                            _to,
+                            _allowedFunctions,
+                            _sessionNonce
+                        )
+                    )
+                )
+            );
     }
 
     /// @dev Executes a low-level call
@@ -393,11 +409,10 @@ contract Account is
     }
 
     /// @dev Executes a low-level static call
-    function _callStatic(address to, bytes calldata data)
-        internal
-        view
-        returns (bytes memory result)
-    {
+    function _callStatic(
+        address to,
+        bytes calldata data
+    ) internal view returns (bytes memory result) {
         bool success;
         (success, result) = to.staticcall(data);
 
