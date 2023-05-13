@@ -159,6 +159,11 @@ contract Account is
         return ERC6551AccountLib.token();
     }
 
+    /// @dev End the session by incrementing the sessionNonce
+    function endSession() external {
+        sessionNonce = sessionNonce + 1;
+    }
+
     /// @dev Returns the current account nonce
     function nonce() public view override returns (uint256) {
         return IEntryPoint(_entryPoint).getNonce(address(this), 0);
