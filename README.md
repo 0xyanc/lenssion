@@ -20,6 +20,11 @@ https://github.com/0xyanc/lenssion/blob/main/src/Account.sol L296-415
 
 https://github.com/0xyanc/lenssion/blob/main/src/Account.sol L45-57
 
+## Build #onPolygon in Public Pool Prize
+https://twitter.com/0xyanc/status/1657605048552022016
+https://mumbai.polygonscan.com/address/0x955303d4d6e30D8844862A8b070c5f83561f5Ff7
+https://mumbai.polygonscan.com/address/0x269BE277E5bd92aAbE4A194692D0737C15232823
+
 ## Frontend
 https://github.com/0xyanc/lenssion-client
 
